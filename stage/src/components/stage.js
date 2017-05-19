@@ -1,66 +1,168 @@
 /* global AFRAME, THREE */
 AFRAME.registerComponent('stage', {
   schema: {
-    groundColor: {type: 'color', default: '#500'},
-    sunPosition: {type:'vec3', default: '0 1 -1'},
-    gridType: {default:'squares', oneOf:['none', 'squares', 'circles']},
-    gridColor: {type: 'color', default: '#F00'},
+    groundColor: {type: 'color', default: '#555'},
+    sunPosition: {type:'vec3', default: '0 3 -1'},
+    gridType: {default:'none', oneOf:['none', 'cross', 'squares', 'circles', 'checkerboard']},
+    gridColor: {type: 'color', default: '#ccc'},
     gridSpacing: {type: 'float', default: 1.0},
-    gridLines: {type: 'int', default: 10} 
+    gridSize: {type: 'float', default: 10.0} 
   },
 
   init: function () {
+
     this.sky = document.createElement('a-sky');
     this.sky.setAttribute('radius', 100);
     this.sky.setAttribute('theta-length', 90);
     this.sky.setAttribute('material', 'shader:skyshader');
 
-    this.ground = document.createElement('a-circle');
+    this.groundMaterial = null;
+    this.ground = document.createElement('a-plane');
     this.ground.setAttribute('rotation', '-90 0 0');
-    this.ground.setAttribute('radius', '102');
-    this.ground.setAttribute('material','color:'+this.data.groundColor);
+    this.ground.setAttribute('width', '202');
+    this.ground.setAttribute('height', '202');
+    this.ground.addEventListener('loaded', this.updateGroundTexture.bind(this));
 
     this.gridMaterial = new THREE.LineBasicMaterial({color: this.data.gridColor});
     this.updateGrid();
 
+    this.hemilight = document.createElement('a-entity');
+    this.hemilight.setAttribute('position', '0 50 0');
+    this.hemilight.setAttribute('light', {
+      'type': 'hemisphere',
+      'color': '#fff' //set to skycolor
+    });
+
+    this.light = document.createElement('a-entity');
+    this.light.setAttribute('position', this.data.sunPosition);
+    this.light.setAttribute('light', '');
+
     this.el.appendChild(this.sky);
     this.el.appendChild(this.ground);
+    this.el.appendChild(this.hemilight);
+    this.el.appendChild(this.light);
+  },
+
+  getFogColor: function (sunIntensity){
+    var FOG_RATIOS = [1, 0.5, 0.22, 0.1, 0.05, 0.02, 0];
+    var FOG_COLORS = ['#DBE5E7', '#DAE3E4', '#A7B5B6', '#8D9088', '#6D6A5B', '#4B4231', '#000000'];
+
+    if (sunIntensity <= 0) return '#000';
+
+    sunIntensity = Math.min(1, sunIntensity);
+
+
+    for (var i = 0; i < FOG_RATIOS.length; i++){
+      if (sunIntensity > FOG_RATIOS[i]){
+      var c1 = new THREE.Color(FOG_COLORS[i - 1]);
+      var c2 = new THREE.Color(FOG_COLORS[i]);
+      var a = (sunIntensity - FOG_RATIOS[i]) / (FOG_RATIOS[i - 1] - FOG_RATIOS[i]);
+      console.log(i, c1, c2);
+      c2.lerp(c1, a);
+      console.log(c2);
+      return c2.getHex();
+      }
+    }
+    return '#000';
+  },
+
+  update: function (oldData) {
+    this.light.setAttribute('position', this.data.sunPosition);
+    var sunPos = new THREE.Vector3(this.data.sunPosition.x, this.data.sunPosition.y, this.data.sunPosition.z);
+    sunPos.normalize();
+    this.sky.setAttribute('material', {'sunPosition': sunPos});
+    this.light.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+    this.hemilight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+
+    this.el.sceneEl.setAttribute('fog', {color: this.getFogColor(sunPos.y), far: 100});
+
+    if (!oldData || this.data.gridColor != oldData.gridColor) {
+      this.gridMaterial.color = new THREE.Color(this.data.gridColor);
+    }
+    if (!oldData || (this.data.gridType != oldData.gridType ||
+      this.data.gridSpacing != oldData.gridSpacing ||
+      this.data.gridSize != oldData.gridSize)) {
+      this.updateGrid();
+    }
+    if (!oldData || this.data.groundColor != oldData.groundColor) {
+      this.updateGroundTexture();
+      this.hemilight.setAttribute('light', {'groundColor': this.data.groundColor});
+    }
+
+
+  },
+
+  updateGroundTexture: function () {
+    var resolution = 512;
+    if (this.ground.object3D.children.length == 0) return;
+
+    if (!this.groundMaterial) {
+      this.groundCanvas = document.createElement('canvas');
+      this.groundCanvas.width = resolution;
+      this.groundCanvas.height = resolution;
+      this.groundTexture = new THREE.Texture(this.groundCanvas);
+      this.groundTexture.wrapS = THREE.RepeatWrapping;
+      this.groundTexture.wrapT = THREE.RepeatWrapping;
+      this.groundMaterial = new THREE.MeshPhongMaterial({map: this.groundTexture});
+      this.ground.object3D.children[0].material = this.groundMaterial;
+    }
+    var res2 = Math.floor(resolution / 2);
+    var ctx = this.groundCanvas.getContext('2d');
+    /*var grd = ctx.createRadialGradient(res2, res2, 0, res2, res2, res2);
+    grd.addColorStop(0, this.data.groundColor);
+    grd.addColorStop(0.4, '#C0D1D5');
+    ctx.fillStyle = grd;
+    */
+    ctx.fillStyle = this.data.groundColor;
+    ctx.fillRect(0, 0, resolution, resolution);
+
+    this.groundTexture.repeat.set(40, 40);
+
+    this.groundTexture.needsUpdate = true;
   },
 
   updateGrid: function () {
     var gridGeometry = new THREE.BufferGeometry();
-    var gridLines = this.data.gridLines;
+    var gridSize = this.data.gridSize;
     var gridSpacing = this.data.gridSpacing;
+    var ypos = 0.001;
     var grid = null;
 
-    if (this.data.gridType == 'squares') {
-      var startLines = - (gridLines-1) / 2;
-      var endLines = (gridLines-1) / 2;
-      var vertices = new Float32Array(gridLines * 4 * 3);
+    if (this.data.gridType == 'cross') {
+      var s = gridSize / 2;
+      var vertices = new Float32Array([-s, 0, ypos, s, 0, ypos, 0, -s, ypos, 0, s, ypos]);
+      gridGeometry.addAttribute('position', new THREE.BufferAttribute( vertices, 3 ) );
+      grid = new THREE.LineSegments(gridGeometry, this.gridMaterial);
+    }
+    else if (this.data.gridType == 'squares') {
+      gridSize = Math.floor(gridSize);
+      var startLines = - (gridSize-1) * gridSpacing / 2;
+      var endLines = (gridSize-1) * gridSpacing / 2;
+      var vertices = new Float32Array(gridSize * 4 * 3);
       var p;
-      for (var i = 0; i < gridLines; i++) {
+      for (var i = 0; i < gridSize; i++) {
         p = startLines + i * gridSpacing;
         vertices[(i * 4 + 0) * 3 + 0] = startLines;
         vertices[(i * 4 + 0) * 3 + 1] = p;
-        vertices[(i * 4 + 0) * 3 + 2] = 0.001;
+        vertices[(i * 4 + 0) * 3 + 2] = ypos;
         vertices[(i * 4 + 1) * 3 + 0] = endLines;
         vertices[(i * 4 + 1) * 3 + 1] = p;
-        vertices[(i * 4 + 1) * 3 + 2] = 0.001;
+        vertices[(i * 4 + 1) * 3 + 2] = ypos;
 
         vertices[(i * 4 + 2) * 3 + 0] = p;
         vertices[(i * 4 + 2) * 3 + 1] = startLines;
-        vertices[(i * 4 + 2) * 3 + 2] = 0.001;
+        vertices[(i * 4 + 2) * 3 + 2] = ypos;
         vertices[(i * 4 + 3) * 3 + 0] = p;
         vertices[(i * 4 + 3) * 3 + 1] = endLines;
-        vertices[(i * 4 + 3) * 3 + 2] = 0.001;
+        vertices[(i * 4 + 3) * 3 + 2] = ypos;
       }
       gridGeometry.addAttribute('position', new THREE.BufferAttribute( vertices, 3 ) );
       grid = new THREE.LineSegments(gridGeometry, this.gridMaterial);
     }
     else if (this.data.gridType == 'circles') {
       var divisions = 16;
-      var vertices = new Float32Array(gridLines * divisions * 2 * 3);
-      for (var i = 0; i < gridLines; i++) {
+      var vertices = new Float32Array(gridSize * divisions * 2 * 3);
+      for (var i = 0; i < gridSize; i++) {
         for (var r = 0; r < divisions; r++) {
           ////?????
         }
@@ -70,22 +172,12 @@ AFRAME.registerComponent('stage', {
       grid = new THREE.LineSegments(gridGeometry, this.gridMaterial);
     }
 
-    if (grid === null && this.ground.getObject3D('grid')) {
-      this.ground.removeObject3D('grid');
-    }
-    else {
+    if (grid !== null ) {
       this.ground.setObject3D('grid', grid);
     }
-  },
-
-  update: function (oldData) {
-    this.sky.setAttribute('material', {
-      'sunPosition': this.data.sunPosition
-    });
-
-    if (this.data.gridColor != oldData.gridColor) {
-      this.gridMaterial.color = new THREE.Color(this.data.gridColor);
-    }
+    else if (this.ground.getObject3D('grid')) {
+        this.ground.removeObject3D('grid');
+      }
   }
 });
 
@@ -98,7 +190,8 @@ AFRAME.registerShader('skyshader', {
     reileigh: { type: 'number', default: 1, max: 0, min: 4, is: 'uniform' },
     mieCoefficient: { type: 'number', default: 0.005, min: 0, max: 0.1, is: 'uniform' },
     mieDirectionalG: { type: 'number', default: 0.8, min: 0, max: 1, is: 'uniform' },
-    sunPosition: { type: 'vec3', default: '0 0 -1', is: 'uniform' }
+    sunPosition: { type: 'vec3', default: '0 0 -1', is: 'uniform' },
+    color: {default: '#fff'} //placeholder to remove warning
   },
 
   vertexShader: [
