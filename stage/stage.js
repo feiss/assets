@@ -1,9 +1,17 @@
 /* global AFRAME, THREE */
 AFRAME.registerComponent('stage', {
   schema: {
-    groundColor: {type: 'color', default: '#555'},
+    skyType: {default: 'gradient', oneOf:['color', 'gradient', 'realistic']},
+    skyColor: {type: 'color', default: '#88c'},
+    horizonColor: {type: 'color', default: '#ddd'},
+    autoLights: {default: true},
     sunPosition: {type:'vec3', default: '0 3 -1'},
-    gridType: {default:'none', oneOf:['none', 'cross', 'squares', 'circles', 'checkerboard']},
+    
+    groundShape: {default: 'flat', oneOf:['none', 'flat', 'desert', 'hills', 'mountains', 'chocolate']}, // TODO
+    groundStyle: {default: 'smooth', oneOf:['crisp', 'smooth', '80s', 'textured', 'snowy']}, // TODO
+    groundColor: {type: 'color', default: '#555'},
+
+    gridType: {default:'none', oneOf:['none', 'cross', 'squares', 'circles', 'checkerboard', 'spots']},
     gridColor: {type: 'color', default: '#ccc'},
     gridSpacing: {type: 'float', default: 1.0},
     gridSize: {type: 'float', default: 10.0} 
@@ -11,10 +19,13 @@ AFRAME.registerComponent('stage', {
 
   init: function () {
 
+    // create sky
+
     this.sky = document.createElement('a-sky');
     this.sky.setAttribute('radius', 100);
     this.sky.setAttribute('theta-length', 90);
-    this.sky.setAttribute('material', 'shader:skyshader');
+
+    // create ground
 
     this.groundMaterial = null;
     this.ground = document.createElement('a-plane');
@@ -23,43 +34,46 @@ AFRAME.registerComponent('stage', {
     this.ground.setAttribute('height', '202');
     this.ground.addEventListener('loaded', this.updateGroundTexture.bind(this));
 
+    // create grid
+
     this.gridMaterial = new THREE.LineBasicMaterial({color: this.data.gridColor});
     this.updateGrid();
+
+    // create lights (one ambient hemisphere light, and one directional for the sun)
 
     this.hemilight = document.createElement('a-entity');
     this.hemilight.setAttribute('position', '0 50 0');
     this.hemilight.setAttribute('light', {
       'type': 'hemisphere',
-      'color': '#fff' //set to skycolor
+      'color': '#fff' // TODO: set to skycolor
     });
+    this.sunlight = document.createElement('a-entity');
+    this.sunlight.setAttribute('position', this.data.sunPosition);
+    this.sunlight.setAttribute('light', '');
 
-    this.light = document.createElement('a-entity');
-    this.light.setAttribute('position', this.data.sunPosition);
-    this.light.setAttribute('light', '');
+    // add all to the scene
 
+    this.el.appendChild(this.hemilight);
+    this.el.appendChild(this.sunlight);
     this.el.appendChild(this.sky);
     this.el.appendChild(this.ground);
-    this.el.appendChild(this.hemilight);
-    this.el.appendChild(this.light);
   },
 
-  getFogColor: function (sunIntensity){
+  // returns a fog color from a specified sun height
+  getFogColor: function (sunHeight) {
     var FOG_RATIOS = [1, 0.5, 0.22, 0.1, 0.05, 0.02, 0];
     var FOG_COLORS = ['#DBE5E7', '#DAE3E4', '#A7B5B6', '#8D9088', '#6D6A5B', '#4B4231', '#000000'];
 
-    if (sunIntensity <= 0) return '#000';
+    if (sunHeight <= 0) return '#000';
 
-    sunIntensity = Math.min(1, sunIntensity);
-
+    sunHeight = Math.min(1, sunHeight);
 
     for (var i = 0; i < FOG_RATIOS.length; i++){
-      if (sunIntensity > FOG_RATIOS[i]){
+      if (sunHeight > FOG_RATIOS[i]){
       var c1 = new THREE.Color(FOG_COLORS[i - 1]);
       var c2 = new THREE.Color(FOG_COLORS[i]);
-      var a = (sunIntensity - FOG_RATIOS[i]) / (FOG_RATIOS[i - 1] - FOG_RATIOS[i]);
-      console.log(i, c1, c2);
+      var a = (sunHeight - FOG_RATIOS[i]) / (FOG_RATIOS[i - 1] - FOG_RATIOS[i]);
       c2.lerp(c1, a);
-      console.log(c2);
       return c2.getHex();
       }
     }
@@ -67,14 +81,57 @@ AFRAME.registerComponent('stage', {
   },
 
   update: function (oldData) {
-    this.light.setAttribute('position', this.data.sunPosition);
     var sunPos = new THREE.Vector3(this.data.sunPosition.x, this.data.sunPosition.y, this.data.sunPosition.z);
     sunPos.normalize();
     this.sky.setAttribute('material', {'sunPosition': sunPos});
-    this.light.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
-    this.hemilight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+    if (this.sunlight) {
+      this.sunlight.setAttribute('position', this.data.sunPosition);
+      this.sunlight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+      this.hemilight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+    } 
+
+    if (
+      !oldData || 
+      this.data.skyType != oldData.skyType ||
+      this.data.skyColor != oldData.skyColor ||
+      this.data.horizonColor != oldData.horizonColor) {
+
+      var mat = {
+        'color': this.data.skyColor, 
+        'topColor': this.data.skyColor, 
+        'bottomColor': this.data.horizonColor,
+        'fog': false
+      };
+
+      if (this.data.skyType != oldData.skyType) {
+        mat['shader'] = {'color': 'flat', 'gradient': 'gradientshader', 'realistic': 'skyshader'}[this.data.skyType];
+      }
+
+      this.sky.setAttribute('material', mat);
+/*
+      switch(this.data.skyType) {
+        case 'flat':
+          this.sky.setAttribute('material', {'shader': 'flat', 'color' : this.data.skyColor});
+        break;
+        case 'gradient':
+          this.sky.setAttribute('material', {
+            'shader': 'gradientshader', 
+            'topColor': this.data.skyColor,
+            'bottomColor': this.data.horizonColor
+          });
+        break;
+        case 'realistic':
+          this.sky.setAttribute('material', {'shader': 'skyshader'});
+        break;
+      }*/
+    }
 
     this.el.sceneEl.setAttribute('fog', {color: this.getFogColor(sunPos.y), far: 100});
+
+    if (this.data.autoLights !== oldData.autoLights) {
+      this.sunlight.setAttribute('visible', this.data.autoLights);
+      this.hemilight.setAttribute('visible', this.data.autoLights);
+    }
 
     if (!oldData || this.data.gridColor != oldData.gridColor) {
       this.gridMaterial.color = new THREE.Color(this.data.gridColor);
@@ -86,10 +143,8 @@ AFRAME.registerComponent('stage', {
     }
     if (!oldData || this.data.groundColor != oldData.groundColor) {
       this.updateGroundTexture();
-      this.hemilight.setAttribute('light', {'groundColor': this.data.groundColor});
+      if (this.hemilight) this.hemilight.setAttribute('light', {'groundColor': this.data.groundColor});
     }
-
-
   },
 
   updateGroundTexture: function () {
@@ -191,7 +246,7 @@ AFRAME.registerShader('skyshader', {
     mieCoefficient: { type: 'number', default: 0.005, min: 0, max: 0.1, is: 'uniform' },
     mieDirectionalG: { type: 'number', default: 0.8, min: 0, max: 1, is: 'uniform' },
     sunPosition: { type: 'vec3', default: '0 0 -1', is: 'uniform' },
-    color: {default: '#fff'} //placeholder to remove warning
+    color: {type: 'color', default: '#fff'} //placeholder to remove warning
   },
 
   vertexShader: [
@@ -369,6 +424,32 @@ AFRAME.registerShader('skyshader', {
       'gl_FragColor.rgb = retColor;',
 
       'gl_FragColor.a = 1.0;',
+    '}'
+  ].join('\n')
+});
+
+
+AFRAME.registerShader('gradientshader', {
+  schema: {
+    topColor: {type: 'color', default: '1 0 0', is: 'uniform'},
+    bottomColor: {type: 'color', default: '0 0 1', is: 'uniform'}
+  },
+  vertexShader: [
+    'varying vec3 vWorldPosition;',
+    'void main() {',
+    'vec4 worldPosition = modelMatrix * vec4( position, 1.0 );',
+    'vWorldPosition = worldPosition.xyz;',
+    'gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0 );',
+    '}'
+  ].join('\n'),
+  fragmentShader: [
+    'uniform vec3 bottomColor;',
+    'uniform vec3 topColor;',
+    'uniform float offset;',
+    'varying vec3 vWorldPosition;',
+    'void main() {',
+    ' float h = normalize( vWorldPosition ).y;',
+    ' gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max(h, 0.0 ), 0.8 ), 0.0 ) ), 1.0 );',
     '}'
   ].join('\n')
 });
