@@ -1,15 +1,15 @@
 /* global AFRAME, THREE */
 AFRAME.registerComponent('stage', {
   schema: {
-    skyType: {default: 'gradient', oneOf:['color', 'gradient', 'realistic']},
+    skyType: {default: 'realistic', oneOf:['color', 'gradient', 'realistic']},
     skyColor: {type: 'color', default: '#88c'},
     horizonColor: {type: 'color', default: '#ddd'},
     autoLights: {default: true},
-    sunPosition: {type:'vec3', default: '0 3 -1'},
+    sunPosition: {type:'vec3', default: '0 1 -1'},
     
-    groundShape: {default: 'flat', oneOf:['none', 'flat', 'desert', 'hills', 'mountains', 'chocolate']}, // TODO
-    groundStyle: {default: 'smooth', oneOf:['crisp', 'smooth', '80s', 'textured', 'snowy']}, // TODO
-    groundColor: {type: 'color', default: '#555'},
+    groundShape: {default: 'desert', oneOf:['none', 'flat', 'desert', 'hills', 'mountains']}, 
+    groundStyle: {default: 'smooth', oneOf:['flat', 'smooth', '80s', 'textured', 'snowy']}, // TODO
+    groundColor: {type: 'color', default: '#795449'},
 
     gridType: {default:'none', oneOf:['none', 'cross', 'squares', 'circles', 'checkerboard', 'spots']},
     gridColor: {type: 'color', default: '#ccc'},
@@ -19,20 +19,20 @@ AFRAME.registerComponent('stage', {
 
   init: function () {
 
+    this.STAGE_RADIUS = 200;
+
     // create sky
 
     this.sky = document.createElement('a-sky');
-    this.sky.setAttribute('radius', 100);
+    this.sky.setAttribute('radius', this.STAGE_RADIUS / 2);
     this.sky.setAttribute('theta-length', 90);
 
     // create ground
 
     this.groundMaterial = null;
-    this.ground = document.createElement('a-plane');
+    this.ground = document.createElement('a-entity');
     this.ground.setAttribute('rotation', '-90 0 0');
-    this.ground.setAttribute('width', '202');
-    this.ground.setAttribute('height', '202');
-    this.ground.addEventListener('loaded', this.updateGroundTexture.bind(this));
+    this.updateGround(true);
 
     // create grid
 
@@ -44,12 +44,13 @@ AFRAME.registerComponent('stage', {
     this.hemilight = document.createElement('a-entity');
     this.hemilight.setAttribute('position', '0 50 0');
     this.hemilight.setAttribute('light', {
-      'type': 'hemisphere',
-      'color': '#fff' // TODO: set to skycolor
+      type: 'hemisphere',
+      color: '#CEE4F0',
+      intensity: 0.4
     });
     this.sunlight = document.createElement('a-entity');
     this.sunlight.setAttribute('position', this.data.sunPosition);
-    this.sunlight.setAttribute('light', '');
+    this.sunlight.setAttribute('light', {intensity: 0.6});
 
     // add all to the scene
 
@@ -57,6 +58,17 @@ AFRAME.registerComponent('stage', {
     this.el.appendChild(this.sunlight);
     this.el.appendChild(this.sky);
     this.el.appendChild(this.ground);
+
+
+    var self = this;
+    window.addEventListener('keypress', function(evt){
+      if(evt.keyCode==33){
+        self.el.setAttribute('stage', {sunPosition: {x: self.data.sunPosition.x, y: self.data.sunPosition.y - 0.03, z: self.data.sunPosition.z}})
+      }
+      else if(evt.keyCode==34){
+        self.el.setAttribute('stage', {sunPosition: {x: self.data.sunPosition.x, y: self.data.sunPosition.y + 0.03, z: self.data.sunPosition.z}})
+      }
+    })
   },
 
   // returns a fog color from a specified sun height
@@ -81,49 +93,51 @@ AFRAME.registerComponent('stage', {
   },
 
   update: function (oldData) {
+    var skyType = this.data.skyType;
     var sunPos = new THREE.Vector3(this.data.sunPosition.x, this.data.sunPosition.y, this.data.sunPosition.z);
     sunPos.normalize();
-    this.sky.setAttribute('material', {'sunPosition': sunPos});
+    if (skyType == 'realistic') {
+      this.sky.setAttribute('material', {'sunPosition': sunPos});
+    }
     if (this.sunlight) {
       this.sunlight.setAttribute('position', this.data.sunPosition);
-      this.sunlight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
-      this.hemilight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+      if (skyType == 'realistic') {
+        this.sunlight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+        this.hemilight.setAttribute('light', {'intensity': 0.1 + sunPos.y * 0.5});
+      }
+      else {
+        // dim down the sky color for the light
+        var skycol = new THREE.Color(this.data.skyColor);
+        skycol.r = (skycol.r + 1.0) / 2.0;
+        skycol.g = (skycol.g + 1.0) / 2.0;
+        skycol.b = (skycol.b + 1.0) / 2.0;
+        this.hemilight.setAttribute('light', {'color': skycol.getHex()});
+      }
     } 
 
     if (
       !oldData || 
-      this.data.skyType != oldData.skyType ||
+      skyType != oldData.skyType ||
       this.data.skyColor != oldData.skyColor ||
       this.data.horizonColor != oldData.horizonColor) {
 
-      var mat = {
-        'color': this.data.skyColor, 
-        'topColor': this.data.skyColor, 
-        'bottomColor': this.data.horizonColor,
-        'fog': false
-      };
+      var mat = {};
 
-      if (this.data.skyType != oldData.skyType) {
-        mat['shader'] = {'color': 'flat', 'gradient': 'gradientshader', 'realistic': 'skyshader'}[this.data.skyType];
+      if (skyType != oldData.skyType) {
+        mat.shader = {'color': 'flat', 'gradient': 'gradientshader', 'realistic': 'skyshader'}[skyType];
+      }
+      if (skyType == 'color') {
+        mat.color = this.data.skyColor;
+        mat.fog = false;
+      }
+      else if (skyType == 'gradient') {
+        mat.topColor = this.data.skyColor;
+        mat.bottomColor = this.data.horizonColor;
+      }
+      else if (skyType == 'realistic') {
       }
 
       this.sky.setAttribute('material', mat);
-/*
-      switch(this.data.skyType) {
-        case 'flat':
-          this.sky.setAttribute('material', {'shader': 'flat', 'color' : this.data.skyColor});
-        break;
-        case 'gradient':
-          this.sky.setAttribute('material', {
-            'shader': 'gradientshader', 
-            'topColor': this.data.skyColor,
-            'bottomColor': this.data.horizonColor
-          });
-        break;
-        case 'realistic':
-          this.sky.setAttribute('material', {'shader': 'skyshader'});
-        break;
-      }*/
     }
 
     this.el.sceneEl.setAttribute('fog', {color: this.getFogColor(sunPos.y), far: 100});
@@ -141,27 +155,66 @@ AFRAME.registerComponent('stage', {
       this.data.gridSize != oldData.gridSize)) {
       this.updateGrid();
     }
-    if (!oldData || this.data.groundColor != oldData.groundColor) {
-      this.updateGroundTexture();
+    if (!oldData || 
+        this.data.groundColor != oldData.groundColor ||
+        this.data.groundShape != oldData.groundShape ||
+        this.data.groundStyle != oldData.groundStyle
+        ) {
+      this.updateGround(this.data.groundShape != oldData.groundShape);
       if (this.hemilight) this.hemilight.setAttribute('light', {'groundColor': this.data.groundColor});
     }
   },
 
-  updateGroundTexture: function () {
-    var resolution = 512;
-    if (this.ground.object3D.children.length == 0) return;
+  updateGround: function (updateGeometry) {
+    if (updateGeometry) {
+      var visibleground = this.data.groundShape != 'none';
+      this.ground.setAttribute('visible', visibleground);
+      if (!visibleground) return;
 
+      var resolution = 64; //this.data.groundShape == 'flat' ? 1 : 64;
+      if (!this.groundGeometry) this.groundGeometry = new THREE.PlaneGeometry(this.STAGE_RADIUS + 2, this.STAGE_RADIUS + 2, resolution - 1, resolution - 1);
+      this.groundGeometry.dynamic = true;
+      var perlin = new PerlinNoise();
+      var verts = this.groundGeometry.vertices;
+      var numVerts = this.groundGeometry.vertices.length;
+      var frequency = 10;
+      var inc = frequency / resolution;
+      var amplitude = {'flat': 0, 'desert': 3, 'hills': 10, 'mountains': 20}[this.data.groundShape];
+
+      for (var i = 0, x = 0, y = 0; i < numVerts; i++) {
+        if (amplitude == 0) {
+          verts[i].z = 0; 
+          continue;
+        }
+        var h = perlin.noise(x, y, 0) * amplitude;
+        x += inc;
+        if (x >= 10) {
+          x = 0;
+          y += inc;
+        }
+        // TODO: improve smoothing in center
+        if (Math.abs(x / frequency - 0.5) < 0.1 && Math.abs(y / frequency - 0.5) < 0.1) h = 0;
+        verts[i].z = h;
+      }
+
+      this.groundGeometry.computeFaceNormals();
+      this.groundGeometry.computeVertexNormals();
+      this.groundGeometry.verticesNeedUpdate  = true;
+      this.groundGeometry.normalsNeedUpdate  = true;
+    }
+
+    var texResolution = 512;
     if (!this.groundMaterial) {
       this.groundCanvas = document.createElement('canvas');
-      this.groundCanvas.width = resolution;
-      this.groundCanvas.height = resolution;
+      this.groundCanvas.width = texResolution;
+      this.groundCanvas.height = texResolution;
       this.groundTexture = new THREE.Texture(this.groundCanvas);
       this.groundTexture.wrapS = THREE.RepeatWrapping;
       this.groundTexture.wrapT = THREE.RepeatWrapping;
-      this.groundMaterial = new THREE.MeshPhongMaterial({map: this.groundTexture});
-      this.ground.object3D.children[0].material = this.groundMaterial;
+      this.groundMaterial = new THREE.MeshPhongMaterial({map: this.groundTexture, wireframe: false});
+      //this.ground.object3D.children[0].material = this.groundMaterial;
     }
-    var res2 = Math.floor(resolution / 2);
+    var res2 = Math.floor(texResolution / 2);
     var ctx = this.groundCanvas.getContext('2d');
     /*var grd = ctx.createRadialGradient(res2, res2, 0, res2, res2, res2);
     grd.addColorStop(0, this.data.groundColor);
@@ -169,11 +222,16 @@ AFRAME.registerComponent('stage', {
     ctx.fillStyle = grd;
     */
     ctx.fillStyle = this.data.groundColor;
-    ctx.fillRect(0, 0, resolution, resolution);
+    ctx.fillRect(0, 0, texResolution, texResolution);
 
     this.groundTexture.repeat.set(40, 40);
 
     this.groundTexture.needsUpdate = true;
+
+    if (updateGeometry) {
+      var mesh = new THREE.Mesh(this.groundGeometry, this.groundMaterial)
+      this.ground.setObject3D('mesh', mesh);
+    }
   },
 
   updateGrid: function () {
@@ -454,3 +512,96 @@ AFRAME.registerShader('gradientshader', {
   ].join('\n')
 });
 
+
+
+// https://gist.github.com/banksean/304522
+var PerlinNoise = function(r) { 
+  if (r == undefined) r = Math;
+  this.grad3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0], 
+                                 [1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1], 
+                                 [0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]]; 
+  this.p = [];
+  for (var i=0; i<256; i++) {
+    this.p[i] = Math.floor(r.random()*256);
+  }
+  // To remove the need for index wrapping, double the permutation table length 
+  this.perm = []; 
+  for(var i=0; i<512; i++) {
+    this.perm[i]=this.p[i & 255];
+  }
+};
+
+PerlinNoise.prototype.dot = function(g, x, y, z) { 
+    return g[0]*x + g[1]*y + g[2]*z; 
+};
+
+PerlinNoise.prototype.mix = function(a, b, t) { 
+    return (1.0-t)*a + t*b; 
+};
+
+PerlinNoise.prototype.fade = function(t) { 
+    return t*t*t*(t*(t*6.0-15.0)+10.0); 
+};
+
+  // Classic Perlin noise, 3D version 
+PerlinNoise.prototype.noise = function(x, y, z) { 
+  // Find unit grid cell containing point 
+  var X = Math.floor(x); 
+  var Y = Math.floor(y); 
+  var Z = Math.floor(z); 
+  
+  // Get relative xyz coordinates of point within that cell 
+  x = x - X; 
+  y = y - Y; 
+  z = z - Z; 
+  
+  // Wrap the integer cells at 255 (smaller integer period can be introduced here) 
+  X = X & 255; 
+  Y = Y & 255; 
+  Z = Z & 255;
+  
+  // Calculate a set of eight hashed gradient indices 
+  var gi000 = this.perm[X+this.perm[Y+this.perm[Z]]] % 12; 
+  var gi001 = this.perm[X+this.perm[Y+this.perm[Z+1]]] % 12; 
+  var gi010 = this.perm[X+this.perm[Y+1+this.perm[Z]]] % 12; 
+  var gi011 = this.perm[X+this.perm[Y+1+this.perm[Z+1]]] % 12; 
+  var gi100 = this.perm[X+1+this.perm[Y+this.perm[Z]]] % 12; 
+  var gi101 = this.perm[X+1+this.perm[Y+this.perm[Z+1]]] % 12; 
+  var gi110 = this.perm[X+1+this.perm[Y+1+this.perm[Z]]] % 12; 
+  var gi111 = this.perm[X+1+this.perm[Y+1+this.perm[Z+1]]] % 12; 
+  
+  // The gradients of each corner are now: 
+  // g000 = grad3[gi000]; 
+  // g001 = grad3[gi001]; 
+  // g010 = grad3[gi010]; 
+  // g011 = grad3[gi011]; 
+  // g100 = grad3[gi100]; 
+  // g101 = grad3[gi101]; 
+  // g110 = grad3[gi110]; 
+  // g111 = grad3[gi111]; 
+  // Calculate noise contributions from each of the eight corners 
+  var n000= this.dot(this.grad3[gi000], x, y, z); 
+  var n100= this.dot(this.grad3[gi100], x-1, y, z); 
+  var n010= this.dot(this.grad3[gi010], x, y-1, z); 
+  var n110= this.dot(this.grad3[gi110], x-1, y-1, z); 
+  var n001= this.dot(this.grad3[gi001], x, y, z-1); 
+  var n101= this.dot(this.grad3[gi101], x-1, y, z-1); 
+  var n011= this.dot(this.grad3[gi011], x, y-1, z-1); 
+  var n111= this.dot(this.grad3[gi111], x-1, y-1, z-1); 
+  // Compute the fade curve value for each of x, y, z 
+  var u = this.fade(x); 
+  var v = this.fade(y); 
+  var w = this.fade(z); 
+   // Interpolate along x the contributions from each of the corners 
+  var nx00 = this.mix(n000, n100, u); 
+  var nx01 = this.mix(n001, n101, u); 
+  var nx10 = this.mix(n010, n110, u); 
+  var nx11 = this.mix(n011, n111, u); 
+  // Interpolate the four results along y 
+  var nxy0 = this.mix(nx00, nx10, v); 
+  var nxy1 = this.mix(nx01, nx11, v); 
+  // Interpolate the two last results along z 
+  var nxyz = this.mix(nxy0, nxy1, w); 
+
+  return nxyz; 
+};
